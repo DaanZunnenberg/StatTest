@@ -6,10 +6,13 @@ import matplotlib.pyplot as plt
 from sklearn.neighbors import KernelDensity
 from tqdm import tqdm 
 
-import nest_asyncio, inspect, functools, itertools
+import nest_asyncio, inspect, functools, itertools, sys, scipy
 nest_asyncio.apply()
+sys.path.append('../')
 
-import models, repr
+from core import models
+from attributes import repr
+from attributes.dec import deprecated
 from attributes.attributes import *
 from attributes.errors import prelim_raise_TypeError
 from scipy.linalg import (
@@ -30,6 +33,8 @@ from typing import (
 
 import warnings
 warnings.filterwarnings(action = 'ignore')
+
+__VERSION__: str = '1.0.5'
 
 def running_maximum(X): return list(accumulate(np.abs(X), max))
 def simple_sequence(X, pct: float = .3) -> float: return pct * (np.max(X.flatten()) - np.min(X.flatten()))
@@ -62,6 +67,45 @@ def initializer(func):
 
     return wrapper
 
+def p_values(z_scores: list, two_sides = True, **kwargs):
+    pvals = []
+    if two_sides:
+        for z_score in z_scores:
+            pvals.append(1 - 2 * (scipy.stats.norm.cdf(np.abs(z_score), **kwargs) - .5))
+    else: raise NotImplementedError('...')
+    
+    return np.sort(pvals)
+
+def Benjamini_Hochberg_Yekutilie(p_vals: list, method: str = 'hochberg', q: float = .05):
+    N = len(p_vals)
+    if method == 'yekutieli':
+        assert all(p_vals[i] <= p_vals[i+1] for i in range(N - 1))
+        NS: float = np.sum([1 / i for i in range(1, N + 1)])
+        for i in range(1, N + 1):
+            if p_vals[i - 1] <= i * q / (N * NS): return 1
+        return 0
+    
+    elif method == 'hochberg':
+        assert all(p_vals[i] <= p_vals[i+1] for i in range(N - 1))
+        for i in range(1, N + 1):
+            if p_vals[i - 1] <= i * q / N: return 1
+        return 0
+
+    else: print("Please select a method from ['hochberg','yekutieli']")
+
+def BHY(z_scores, method: str = 'hochberg', q: list = [.01, .05, .1]):
+    rejections = {}
+    N = len(z_scores)
+    for s in q:
+        rejection_count = 0
+        for run, z_score in tqdm(z_scores.T.iterrows()):
+            pvals = p_values(z_score)
+            rejection_count += Benjamini_Hochberg_Yekutilie(pvals, method = method, q = s)
+        rejections = {**rejections, **{s:rejection_count / N}}
+    return rejections
+
+def BernoulliV(p, n) -> float: return p * (1 - p) / n
+
 class Kernel(object):
 
     def __init__(self, *, kernel_params: dict) -> NoReturn: self.kernel_params = kernel_params
@@ -72,11 +116,11 @@ class Kernel(object):
         BaseKernel: function = lambda x, y : 1 * SelcKernel(x.item(0), y.item(0)) * SelcKernel(x.item(1), y.item(1)) / (bandwidth ** 2)
         return BaseKernel
 
+@deprecated('Class Test deprecated, use [TestV2]')
 class Test(object):
 
     @prelim_raise_TypeError
     def __init__(self, data, kernel_params: dict, time_params: dict, disable=False, reachable=False, user='root', show_object=True) -> NoReturn:
-        raise Warning('Dec class')
         self.data = data
         self.kernel_params = kernel_params
         self.time_params = time_params
@@ -332,7 +376,6 @@ class Test(object):
         
         return bound, final
 
-
 class TestV2(object):
     
     @prelim_raise_TypeError
@@ -413,19 +456,22 @@ class TestV2(object):
             ])
         return P_P
     
-    def emp_dist(self):
-        x, y = self.data[['process 1']], self.data[['process 2']]
-        kde_skl_p1 = KernelDensity(kernel='gaussian', bandwidth=0.5).fit(x)
-        log_density_p1 = kde_skl_p1.score_samples(x)
+    def emp_dist(self, dist: bool):
+        if not dist:
+            return np.ones(self.kernel_params['n'])
+        else:
+            x, y = self.data[['process 1']], self.data[['process 2']]
+            kde_skl_p1 = KernelDensity(kernel='gaussian', bandwidth = 2 * self.kernel_params['bandwidth']).fit(x)
+            log_density_p1 = kde_skl_p1.score_samples(x)
 
-        kde_skl_p2 = KernelDensity(kernel='gaussian', bandwidth=0.5).fit(y)
-        log_density_p2 = kde_skl_p2.score_samples(y)
-        return np.exp(log_density_p1 + log_density_p2)
+            kde_skl_p2 = KernelDensity(kernel='gaussian', bandwidth = 2 * self.kernel_params['bandwidth']).fit(y)
+            log_density_p2 = kde_skl_p2.score_samples(y)
+            return np.exp(log_density_p1 + log_density_p2)
     
     @staticmethod
     def tau_scalar(tau) -> float: return (tau * (1 + np.exp(tau)) / (np.exp(tau) - 1))
 
-    def univ_var(self, A: iterable):
+    def univ_var(self, A: ...):
         final: list = []
         P_P: np.matrix = self.projection_mat
         if isiterable(A):
@@ -501,7 +547,7 @@ class TestV2(object):
         except:
             print('Please call Self@time_domain_smoother(...) for using the state domain smooter.')
             sys.exit(1)
-        if not dist: dist = self.emp_dist()
+        if not isinstance(dist, list): dist = self.emp_dist(dist)
         self.kernel_dist = dist
         X = self.data
         bandwidth, n, T, _kernel = self.kernel_params.values()
@@ -523,7 +569,7 @@ class TestV2(object):
             for y in np.matrix(sliced):
                 sub_estimate += y.T @ y
             
-            factpvar.append(1 / dist[idx])
+            factpvar.append(bandwidth ** 2 / dist[idx])
             estimate.append(sub_estimate / (norm * dt))
             variance.append(self.true_est_var[idx] / dist[idx])
 
@@ -561,7 +607,7 @@ class TestV2(object):
             diff.append(t - s)
             diff_vec.append((L @ (t-s).reshape(4,1)))
 
-            _ = (2 * sn + tn) * v / (b * n)
+            _ = (2 * sn + tn) * v
             var.append(_)
             try: std_inv.append(np.linalg.inv(sqrtm(_)))
             except: std_inv.append(np.matrix([[np.nan,np.nan, np.nan],[np.nan,np.nan, np.nan],[np.nan,np.nan, np.nan]]))
@@ -572,9 +618,9 @@ class TestV2(object):
             try: VI = std_inv[i]
             except: VI = np.matrix([[np.nan,np.nan, np.nan],[np.nan,np.nan, np.nan],[np.nan,np.nan, np.nan]])
             gaussian.append(
-                VI @ diff_vec[i]
+                np.sqrt(n * b ** 2) * VI @ diff_vec[i]
             )
-        plt.plot([item.item(0) for item in gaussian])
+            
         self.gaussian = gaussian
 
     def transform_1D_gauss(self, alpha: float = .95):
@@ -606,6 +652,10 @@ class simulate(object):
                  run_on_call: bool = False,
                  ProcessGenerator: Callable = models.BivariateOUProcess) -> ...:
         self.number_of_runs = number_of_runs
+        try: est_config.pop('data', False)
+        except: 
+            est_config.pop('data', False)
+            print("Popped 'data' from config")
         self.config = config
         self.est_config = est_config
         self.ProcessGenerator = ProcessGenerator
@@ -613,22 +663,58 @@ class simulate(object):
         if True:self.info()
     
     def generate_config(self, data, T, n):
-        config: dict = {
-            'data'  : data,
-            'kernel_params' : {
-                'bandwidth' : 5 * np.std(data).mean() / ((n ** (1 / 6)) * np.log(n)),
-                'n'         : n,
-                'T'         : T,
-                'kernel'    : None
-            },
-            'time_params'   : {
-                'bandwidth' : T * np.std(data).sum() / ((n ** .5) * np.log(n)),
-                'n'         : n,
-                'T'         : T
-            },
-        }
-        if not self.est_config: return config
-        else: return self.est_config
+        """
+        Standard configuration with a correction from discussion in Fan-Fan-Lv (https://arxiv.org/pdf/math/07011070)
+        """
+        if not self.est_config: 
+            if T >= 200:
+                config: dict = {
+                    'data'  : data,
+                    'kernel_params' : {
+                        'bandwidth' : 4.5 / ((n ** (1 / 5))),
+                        'n'         : n,
+                        'T'         : T,
+                        'kernel'    : Kernel.BaseKernel
+                    },
+                    'time_params'   : {
+                        'bandwidth' : 200 * T / n,
+                        'n'         : n,
+                        'T'         : T
+                    },
+                }
+            elif T >= 100:
+                config: dict = {
+                    'data'  : data,
+                    'kernel_params' : {
+                        'bandwidth' : 3 / ((n ** (1 / 5))),
+                        'n'         : n,
+                        'T'         : T,
+                        'kernel'    : Kernel.BaseKernel
+                    },
+                    'time_params'   : {
+                        'bandwidth' : 100 * T / n,
+                        'n'         : n,
+                        'T'         : T
+                    },
+                }
+            else:
+                config: dict = {
+                    'data'  : data,
+                    'kernel_params' : {
+                        'bandwidth' : 2 / ((n ** (1 / 5))),
+                        'n'         : n,
+                        'T'         : T,
+                        'kernel'    : Kernel.BaseKernel
+                    },
+                    'time_params'   : {
+                        'bandwidth' : 100 * T / n,
+                        'n'         : n,
+                        'T'         : T
+                    },
+                }
+        else: 
+            config: dict = {**{'data'  : data}, **self.est_config}
+        return config
 
     def info(self): 
         for key, val in self.__dict__.items():
@@ -640,18 +726,18 @@ class simulate(object):
                 print(key, '::', val.__dict__.get('name', 'Nameless dataframe object at 0x{}'.format(id(val))))
             else: print('{:>10} :: {}'.format(key, val))
     
-    def run(self, seed: list = [], **Test_kwargs):
+    def run(self, seed: list = [], state_kwargs: dict = {}, time_kwargs: dict = {}, **Test_kwargs):
         if len(seed) > 0: print('Simulation started on custom seed.')
         process = self.ProcessGenerator(**self.config)
         for run in tqdm(range(self.number_of_runs)):
             try: np.random.seed(seed[run])
-            except: pass
+            except: print('No seed set', end = '\r')
             process.simulate()
             X, T, n = process.config()
             test = TestV2(**{**self.generate_config(X, T, n), **Test_kwargs})
 
-            test.time_domain_smoother()
-            test.state_domain_smoother()
+            test.time_domain_smoother(**time_kwargs)
+            test.state_domain_smoother(**state_kwargs)
             test.gauss()
 
             bound, scalar_gauss = test.transform_1D_gauss()
@@ -684,13 +770,30 @@ class simulate(object):
                 np.round(100 * alpha, 0)
             ))
 
+    def bound(self, alpha):
+        n = len(self.results[f'run_{0}']['gauss'])
+        x = -np.log(np.log(1/alpha))
+        an = [np.sqrt(2 * np.log(z)) for z in range(1, n + 1)]
+        bn = [np.sqrt(2 * np.log(z)) - ((np.log(np.log(z)) + np.log(np.pi)) / (2 * np.sqrt(2 * np.log(z)))) for z in range(1, n + 1)]
+        bound = [np.nan]
+        for i in range(1,n):
+            bound.append((x / an[i]) + bn[i])
+        return bound
+    
+    
     def plot_results(self, **kwargs):
+        bound1, bound5, bound10, bound50 = self.bound(.99), self.bound(.95), self.bound(.90), self.bound(.5)
         fig, axs = plt.subplots(1, 2, figsize = (18,8))
         for run in range(self.number_of_runs):
             rr = self.results[f'run_{run}']
-            axs[0].plot(running_maximum(rr['gauss']), c = 'black', lw = 1, alpha = .5)
+            if run == 0: axs[0].plot(running_maximum(rr['gauss']), c = 'C0', lw = 1, alpha = .5, label = r"Emperical 95% running maximum")
+            else: axs[0].plot(running_maximum(rr['gauss']), c = 'C0', lw = 1, alpha = .5)
             
-        axs[0].plot(self.results[f'bound'])
+        axs[0].plot(bound1, color = 'grey', ls = '-', lw = 1, label = r"Theoretical running maximum (1%)")
+        axs[0].plot(bound5, color = 'grey', ls = 'dashed', lw = 1, label = r"Theoretical running maximum (5%)")
+        axs[0].plot(bound10, color = 'grey', ls = 'dotted', lw = 1, label = r"Theoretical running maximum (10%)")
+        axs[0].plot(bound50, color = 'red', ls = 'dashed', lw = 1, label = r"Theoretical running maximum (50%)")
+        axs[0].legend(loc='upper center', bbox_to_anchor=(0.5, -0.05), fancybox=True, shadow=True, ncol=5)
         axs[1].hist([running_maximum(self.results[f'run_{run}']['gauss'])[-1] for run in range(self.number_of_runs)], **kwargs)
         plt.show()
 
@@ -754,15 +857,27 @@ class graph(Test):
     def plot_running_maximum(self):
         _, scalar_gauss = self.transform_1D_gauss()
         bound1, bound5, bound10, bound50 = self.bound(.99), self.bound(.95), self.bound(.90), self.bound(.5)
-        fig, axs = plt.subplots(1,1, figsize = (12,6))
-        axs.plot(running_maximum(scalar_gauss), color = 'black', lw = 1, label = r"Theoretical 95% running maximum")
-        axs.plot(bound1, color = 'grey', ls = '-', lw = 1, label = r"Emperical running maximum (1%)")
-        axs.plot(bound5, color = 'grey', ls = 'dashed', lw = 1, label = r"Emperical running maximum (5%)")
-        axs.plot(bound10, color = 'grey', ls = 'dotted', lw = 1, label = r"Emperical running maximum (10%)")
-        axs.plot(bound50, color = 'red', ls = 'dashed', lw = 1, label = r"Emperical running maximum (50%)")
-        axs.plot(scalar_gauss, color = 'C0', lw = 1, label = r"Standardised Gaussian Process")
-        axs.legend(loc='upper center', bbox_to_anchor=(0.5, -0.05), fancybox=True, shadow=True, ncol=3)
-        plt.show()
+        fig, axs = plt.subplots(2,1, figsize = (12,8))
+        axs[0].plot(running_maximum(scalar_gauss), color = 'black', lw = 1, label = r"Theoretical 95% running maximum")
+        axs[0].plot(bound1, color = 'grey', ls = '-', lw = 1, label = r"Emperical running maximum (1%)")
+        axs[0].plot(bound5, color = 'grey', ls = 'dashed', lw = 1, label = r"Emperical running maximum (5%)")
+        axs[0].plot(bound10, color = 'grey', ls = 'dotted', lw = 1, label = r"Emperical running maximum (10%)")
+        axs[0].plot(bound50, color = 'red', ls = 'dashed', lw = 1, label = r"Emperical running maximum (50%)")
+        axs[0].plot(scalar_gauss, color = 'C0', lw = 1, label = r"Standardised Gaussian Process")
+        axs[0].legend(loc='upper center', bbox_to_anchor=(0.5, -0.05), fancybox=True, shadow=True, ncol=3)
+        axs[0].set_title('Running maximum')
+        axs[0].grid(True)
+
+        t, x, y = np.linspace(0, self.kernel_params.get('T'), self.kernel_params.get('n')), self.data['process 1'], self.data['process 2']
+        axs[1].plot(t, x, label='Process 1')
+        axs[1].plot(t, y, label='Process 2')
+        axs[1].set_xlabel('Time')
+        axs[1].set_ylabel('Value')
+        axs[1].set_title('Processes')
+        axs[0].legend(loc='upper center', bbox_to_anchor=(0.5, -0.05), fancybox=True, shadow=True, ncol=2)
+        axs[1].grid(True)
+        fig.tight_layout()
+        fig.show()
 
     def plot_estimates(self):
         est_time = self.time_estimates['estimate']

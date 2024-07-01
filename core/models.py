@@ -133,8 +133,10 @@ class BivariateCorrelatedBM:
         plt.show()
 
 class BivariateNonHomogeneous:
-    def __init__(self, T=1.0, dt=0.01, rho = .5):
+    def __init__(self, T=1.0, dt=0.01, rho = .5, alpha = 1, b = 1):
         self.rho = rho
+        self.alpha = alpha
+        self.b = b
         self.T = T            # Total time
         self.dt = dt          # Time step
         self.N = int(T / dt)  # Number of time steps
@@ -149,15 +151,12 @@ class BivariateNonHomogeneous:
         self.y = np.zeros(self.N)
 
         # Initial values
-        self.x[0] = np.random.normal()
-        self.y[0] = np.random.normal()
+        self.x[0] = 0
+        self.y[0] = 0
 
+    def mu(self, x,t): return -2*x#-np.max([20 * (t / self.T) * x, 20 * x])
     
-    @staticmethod
-    def mu(x,t): return -np.max([2 * t * x, 20 * x])
-    
-    @staticmethod
-    def sigm(t): return 2.01 + 2 * np.sin(np.pi * t)
+    def sigm(self, t): return 2.01 + self.alpha * np.sin(4 * np.pi * t / self.T)
 
     def simulate(self, seed=False):
         if seed: np.random.seed(seed)
@@ -165,8 +164,8 @@ class BivariateNonHomogeneous:
         for i in range(1, self.N):
             z = np.random.normal(size=2)
             dz = np.dot(self.L, z) * np.sqrt(self.dt)
-            self.x[i] = self.x[i-1] + self.mu(self.x[i-1], i * self.dt) * self.dt + self.sigm(i * self.dt) * dz[0]
-            self.y[i] = self.y[i-1] + self.mu(self.y[i-1], i * self.dt) * self.dt + self.sigm(i * self.dt) * dz[1]
+            self.x[i] = self.x[i-1] + self.b * self.mu(self.x[i-1], i * self.dt) * self.dt + self.sigm(i * self.dt) * dz[0]
+            self.y[i] = self.y[i-1] + self.b * self.mu(self.y[i-1], i * self.dt) * self.dt + self.sigm(i * self.dt) * dz[1]
             # self.x[i] = self.x[i-1] + self.mu1 * self.dt + 0.5 * np.sqrt(np.max([self.x[i-1], 0])) * dz[0]
             # self.y[i] = self.y[i-1] + self.mu2 * self.dt + 0.5 * np.sqrt(np.max([self.y[i-1], 0])) * dz[1]
 

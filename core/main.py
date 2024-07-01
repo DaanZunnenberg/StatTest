@@ -67,44 +67,45 @@ def initializer(func):
 
     return wrapper
 
-def p_values(z_scores: list, two_sides = True, **kwargs):
-    pvals = []
-    if two_sides:
-        for z_score in z_scores:
-            pvals.append(1 - 2 * (scipy.stats.norm.cdf(np.abs(z_score), **kwargs) - .5))
-    else: raise NotImplementedError('...')
-    
-    return np.sort(pvals)
+class _dec(deprecated):
+    def p_values(z_scores: list, two_sides = True, **kwargs):
+        pvals = []
+        if two_sides:
+            for z_score in z_scores:
+                pvals.append(1 - 2 * (scipy.stats.norm.cdf(np.abs(z_score), **kwargs) - .5))
+        else: raise NotImplementedError('...')
+        
+        return np.sort(pvals)
 
-def Benjamini_Hochberg_Yekutilie(p_vals: list, method: str = 'hochberg', q: float = .05):
-    N = len(p_vals)
-    if method == 'yekutieli':
-        assert all(p_vals[i] <= p_vals[i+1] for i in range(N - 1))
-        NS: float = np.sum([1 / i for i in range(1, N + 1)])
-        for i in range(1, N + 1):
-            if p_vals[i - 1] <= i * q / (N * NS): return 1
-        return 0
-    
-    elif method == 'hochberg':
-        assert all(p_vals[i] <= p_vals[i+1] for i in range(N - 1))
-        for i in range(1, N + 1):
-            if p_vals[i - 1] <= i * q / N: return 1
-        return 0
+    def Benjamini_Hochberg_Yekutilie(p_vals: list, method: str = 'hochberg', q: float = .05):
+        N = len(p_vals)
+        if method == 'yekutieli':
+            assert all(p_vals[i] <= p_vals[i+1] for i in range(N - 1))
+            NS: float = np.sum([1 / i for i in range(1, N + 1)])
+            for i in range(1, N + 1):
+                if p_vals[i - 1] <= i * q / (N * NS): return 1
+            return 0
+        
+        elif method == 'hochberg':
+            assert all(p_vals[i] <= p_vals[i+1] for i in range(N - 1))
+            for i in range(1, N + 1):
+                if p_vals[i - 1] <= i * q / N: return 1
+            return 0
 
-    else: print("Please select a method from ['hochberg','yekutieli']")
+        else: print("Please select a method from ['hochberg','yekutieli']")
 
-def BHY(z_scores, method: str = 'hochberg', q: list = [.01, .05, .1]):
-    rejections = {}
-    N = len(z_scores)
-    for s in q:
-        rejection_count = 0
-        for run, z_score in tqdm(z_scores.T.iterrows()):
-            pvals = p_values(z_score)
-            rejection_count += Benjamini_Hochberg_Yekutilie(pvals, method = method, q = s)
-        rejections = {**rejections, **{s:rejection_count / N}}
-    return rejections
+    def BHY(z_scores, method: str = 'hochberg', q: list = [.01, .05, .1]):
+        rejections = {}
+        N = len(z_scores)
+        for s in q:
+            rejection_count = 0
+            for run, z_score in tqdm(z_scores.T.iterrows()):
+                pvals = p_values(z_score)
+                rejection_count += Benjamini_Hochberg_Yekutilie(pvals, method = method, q = s)
+            rejections = {**rejections, **{s:rejection_count / N}}
+        return rejections
 
-def BernoulliV(p, n) -> float: return p * (1 - p) / n
+    def BernoulliV(p, n) -> float: return p * (1 - p) / n
 
 class Kernel(object):
 

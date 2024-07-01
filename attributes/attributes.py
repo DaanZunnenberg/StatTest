@@ -53,7 +53,10 @@ def template_decorator(func):
         print(f'Completed in {round(time.time() - _, 2)} seconds')
     return wrapper
 
-def ignore_unhashable(func): 
+def ignore_unhashable(func):
+    """
+    Decorator object to use when the unhashable warning/error is raised.
+    """
     import functools
     uncached = func.__wrapped__
     attributes = functools.WRAPPER_ASSIGNMENTS + ('cache_info', 'cache_clear')

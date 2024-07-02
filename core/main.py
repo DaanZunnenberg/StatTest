@@ -67,7 +67,8 @@ def initializer(func):
 
     return wrapper
 
-class _dec(deprecated):
+@deprecated
+class _dec(object):
     def p_values(z_scores: list, two_sides = True, **kwargs):
         pvals = []
         if two_sides:
@@ -99,9 +100,9 @@ class _dec(deprecated):
         N = len(z_scores)
         for s in q:
             rejection_count = 0
-            for run, z_score in tqdm(z_scores.T.iterrows()):
-                pvals = p_values(z_score)
-                rejection_count += Benjamini_Hochberg_Yekutilie(pvals, method = method, q = s)
+            # for run, z_score in tqdm(z_scores.T.iterrows()):
+                # pvals = p_values(z_score)
+                # rejection_count += Benjamini_Hochberg_Yekutilie(pvals, method = method, q = s)
             rejections = {**rejections, **{s:rejection_count / N}}
         return rejections
 

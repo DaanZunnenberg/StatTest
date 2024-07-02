@@ -156,7 +156,7 @@ class BivariateNonHomogeneous:
 
     def mu(self, x,t): return -2*x#-np.max([20 * (t / self.T) * x, 20 * x])
     
-    def sigm(self, t): return 2.01 + self.alpha * np.sin(4 * np.pi * t / self.T)
+    def sigm(self, t): return 2.01 + self.alpha * np.sin(16 * np.pi * t / self.T)
 
     def simulate(self, seed=False):
         if seed: np.random.seed(seed)

@@ -10,7 +10,9 @@ sys.path.append('../')
 from attributes.attributes import ignore_unhashable
 
 class MultipleHypTest(object):
-
+    """
+    Benjamini-Hochberg-Yekutieli framework for mult. hyp. testing.
+    """
     def __init__(self, z_scores, two_sides: bool = True, remove_zero_rows: bool = True, run_on_call: bool = False, **kwargs) -> NoReturn:
         if remove_zero_rows: z_scores = z_scores[z_scores != 0].dropna()
         self.z_scores = z_scores

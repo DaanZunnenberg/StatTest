@@ -7,7 +7,9 @@ from typing import (
 import attributes.attributes as attributes
 
 class differential_equations:
-
+    """
+    string representation to diff. eq.
+    """
     def __init__(self, model: str = 'ou', spec: str = None) -> None:
         self.model = model
         self.spec = spec

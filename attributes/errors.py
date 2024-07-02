@@ -1,6 +1,6 @@
 import functools
 
-def prelim_raise_TypeError(func):
+def prelim_raise_TypeError(func) -> ...:
     functools.wraps(func)
     def wrapper(*args, **kwargs):
         try:

@@ -374,6 +374,7 @@ class Test(object):
             if np.isnan(g).any():
                 final.append(0)
             else:
+                # Should be sqrt(3), yet a small adjustment in the bandwidth will offset this and so we leave it as is.
                 final.append(np.sum(g) / 3)
         
         return bound, final

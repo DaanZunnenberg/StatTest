@@ -645,6 +645,38 @@ class TestV2(object):
         
         return bound, final
 
+class repl(object):
+    """
+    Class to replicate results summary
+    """
+    def __init__(self, gauss: pd.DataFrame, name: str):
+        self.gauss = gauss
+        self.name = name
+        self.number_of_runs = len(gauss.columns)
+
+    def bound(self, alpha):
+        x = -np.log(np.log(1/alpha))
+
+        n = len(self.gauss[f'run_{0}'])
+        an = [np.sqrt(2 * np.log(z)) for z in range(1, n + 1)]
+        bn = [np.sqrt(2 * np.log(z)) - ((np.log(np.log(z)) + np.log(np.pi)) / (2 * np.sqrt(2 * np.log(z)))) for z in range(1, n + 1)]
+        bound = [np.nan]
+        for i in range(1,n):
+            bound.append((x / an[i]) + bn[i])
+        return bound
+    
+    def summary(self, alphas:  list = [.90,.95,.99]):
+        print(f' {self.name} '.center(70, '-'))
+        bounds = []
+        for alpha in alphas: bounds.append(self.bound(alpha))
+        for alpha, bound in zip(alphas, bounds):
+            print('Number of runs: {}, rejection rate: {}% (\u03B1 = {}%)'.format(
+                self.number_of_runs, 
+                np.round(100 * np.sum([1 * (running_maximum(self.gauss[f'run_{run}'])[-1] > bound[-1]) for run in range(self.number_of_runs)]) / self.number_of_runs, 2),
+                np.round(100 * alpha, 0)
+            ))
+        print('')
+    
 class simulate(object):
     
     def __init__(self, 

@@ -11,13 +11,18 @@ from attributes.attributes import ignore_unhashable
 
 class MultipleHypTest(object):
 
-    def __init__(self, z_scores, two_sides: bool = True, remove_zero_rows: bool = True) -> NoReturn:
+    def __init__(self, z_scores, two_sides: bool = True, remove_zero_rows: bool = True, run_on_call: bool = False, **kwargs) -> NoReturn:
         if remove_zero_rows: z_scores = z_scores[z_scores != 0].dropna()
         self.z_scores = z_scores
         self.two_sides = two_sides
         self.N = len(z_scores)
         self.S = len(z_scores.T)
         self.rejections = {}
+        if kwargs.get('name', False): 
+            name = kwargs.pop('name')
+            print(f' {name} '.center(70, '-'))
+        if run_on_call: self.run(**kwargs)
+            
 
     @ignore_unhashable
     @cache
@@ -68,13 +73,14 @@ class MultipleHypTest(object):
             print(f'MultipleHypTest@Self.run: running [{method}]...')
             self.BHY(method = method, q = q)
             self.print(method)
+        print('Finished'.center(70, '-'))
 
     def print(self, method: str):
         print(f'\n{method.title()}:')
         for key, val in self.rejections.get(method, {'':''}).items():
             if key != '':
                 print(
-                    'Rejection rate: {}% (\u03B1 = {}%)'.format(self.lrjust(key), self.lrjust(val)))
+                    'Rejection rate: {}% (\u03B1 = {}%)'.format(self.lrjust(val), self.lrjust(key)))
             else: pass
         print('\n', end = '')
 
@@ -85,6 +91,8 @@ class MultipleHypTest(object):
     def lrjust(flt: float):
         if flt < .1: return str(float(np.round(100 * flt))).rjust(4, ' ').ljust(5, '0')
         else: return str(float(np.round(100 * flt))).ljust(5, '0')
+    
+    def __repr__(self): return ''
 
 if __name__ == '__main__':
     # Usuage

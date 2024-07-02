@@ -34,7 +34,7 @@ from typing import (
 import warnings
 warnings.filterwarnings(action = 'ignore')
 
-__VERSION__: str = '1.0.5'
+__VERSION__: str = '1.0.6'
 
 def running_maximum(X): return list(accumulate(np.abs(X), max))
 def simple_sequence(X, pct: float = .3) -> float: return pct * (np.max(X.flatten()) - np.min(X.flatten()))

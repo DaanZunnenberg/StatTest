@@ -54,6 +54,9 @@ def template_decorator(func):
     return wrapper
 
 def ignore_unhashable(func): 
+    """
+    Fixes @cache unhashable bug
+    """
     import functools
     uncached = func.__wrapped__
     attributes = functools.WRAPPER_ASSIGNMENTS + ('cache_info', 'cache_clear')

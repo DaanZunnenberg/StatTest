@@ -1,10 +1,9 @@
-import pandas as pd
+import sys
+import os
+import time
 import numpy as np
-from typing import NoReturn, Any, Type
-from tqdm import tqdm
-from functools import cache
-from statsmodels.tsa.stattools import kpss
-import functools, warnings, scipy, sys, os, time
+import pandas as pd
+import warnings
 from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.regression.linear_model import OLS
 from statsmodels.tools.tools import add_constant
@@ -12,44 +11,6 @@ from statsmodels.tsa.stattools import pacf
 from statsmodels.tsa.tsatools import lagmat
 from numpy.testing import assert_equal, assert_almost_equal
 
-warnings.filterwarnings(action = 'ignore')
-sys.path.append('../')
-from attributes.attributes import ignore_unhashable
-
-class alias(object):
-    '''
-    Decorator for aliasing method names.
-    Only works within classes decorated with '@aliased'
-    ''' 
-    def __init__(self, *aliases):
-        self.aliases = set(aliases)
-    
-    def __call__(self, f):
-        f._aliases = self.aliases
-        return f
-    
-def ignore_warning(warning: Type[Warning]):
-    """
-    Ignore a given warning occurring during method execution.
-
-    Args:
-        warning (Warning): warning type to ignore.
-
-    Returns:
-        the inner function
-
-    """
-
-    def inner(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category= warning)
-                return func(*args, **kwargs)
-
-        return wrapper
-
-    return inner
 
 class Leybourne(object):
     """
@@ -371,264 +332,103 @@ class Leybourne(object):
         return self.run(x, arlags=arlags, regression=regression, method=method,
                         varest=varest)
 
+
+# output results
 def _print_res(res, st):
     print("  lmstat =", "{0:0.5f}".format(res[0]), " pval =",
           "{0:0.5f}".format(res[1]), " arlags =", res[2])
     print("    cvdict =", res[3])
     print("    time =", "{0:0.5f}".format(time.time() - st))
 
-class UnitRootTest(object):
 
-    def __init__(self, processes, remove_zero_rows: bool = True, run_on_call: bool = False, **kwargs):
-        if remove_zero_rows: processes = processes[processes != np.nan].dropna()
-        self.processes = processes
-        self.N = len(processes)
-        self.S = len(processes.T) / 2
-        self.rejections = {}
-        self.rejections_kpss = {}
-        self.rejections_lm = {}
-        self.p_values_kpss = {}
-        self.p_values_lm = {}
-        if kwargs.get('name', False): 
-            name = kwargs.pop('name')
-            print(f' {name} '.center(70, '-'))
-        if run_on_call: self.run(**kwargs)
-    
-    @ignore_unhashable
-    @cache
-    @ignore_warning(UserWarning)
-    def KwiatkowskiPhillipsSchmidtShin(self, x, **kwargs):
-        name: str = x.columns[0]
-        config: dict = {
-            **{'x'     :   x}, **kwargs
-        }
-        kpss_test = kpss(**config)
-        self.p_values_kpss = {**self.p_values_kpss, **{name:kpss_test[1]}} # Selects the p-value
-    
-    @ignore_unhashable
-    @cache
-    @ignore_warning(UserWarning)
-    def LeybournMccabe(self, x, **kwargs):
-        name: str = x.columns[0]
-        config: dict = {
-            **{'x'     :   x}, **kwargs
-        }
-        lm_test = Leybourne().run(**config)
-        self.p_values_lm = {**self.p_values_lm, **{name:lm_test[1]}}
-
-    @ignore_warning(UserWarning)
-    def lm(self, **kwargs):
-        pvals = []
-        for col in tqdm(self.processes.columns):
-            x = self.processes[[col]]
-            pvals.append(self.LeybournMccabe(x = x, **kwargs))
-        self.p_values_lm = {'lm':self.p_values_lm}
-
-    @ignore_warning(UserWarning)
-    def kpss(self, **kwargs) -> Any: 
-        pvals = []
-        for col in tqdm(self.processes.columns):
-            x = self.processes[[col]]
-            pvals.append(self.KwiatkowskiPhillipsSchmidtShin(x = x, **kwargs))
-        self.p_values_kpss = {'kpss':self.p_values_kpss}
-
-    @ignore_unhashable
-    @cache
-    @ignore_warning(UserWarning)
-    def run(self, q: list = [.1, .05, .01]) -> NoReturn:
-        for method in ['kpss','lm']:
-            print(f'MultipleHypTest@Self.run: running [{method}]...')
-            self.__getattribute__(method)()
-            for _ in q:
-                pvals = self.__getattribute__(f'p_values_{method}')[method]
-                rejections = self.rejection_counter(pvals, _, self.S)
-                self.rejections = {**self.rejections, **{method + f'_{_}':rejections}}
-                if method == 'kpss':
-                    self.rejections_kpss = {**self.rejections_kpss, **{method + f'_{_}':rejections}}
-                else:
-                    self.rejections_lm = {**self.rejections_lm, **{method + f'_{_}':rejections}}
-            self.print(method)
-        print('Finished'.center(70, '-'))
-
-    @staticmethod
-    def rejection_counter(p_vals, q, S):
-        rejections = 0
-        p_vals1 = list(p_vals.values())[::2]
-        p_vals2 = list(p_vals.values())[1::2]
-        for p_val1, p_val2 in zip(p_vals1, p_vals2, strict=True):
-            if (p_val1 <= q + .00000001) & (p_val2 <= q + .00000001): rejections += 1
-        return rejections / S
-    
-    def print(self, method: str):
-        print(f'\n{method.title()}:')
-        for key, val in self.rejections.items():
-            if key.__contains__(method):
-                print(
-                    'Rejection rate: {}% (\u03B1 = {}%)'.format(self.lrjust(val), self.lrjust(key.split('_')[1])))
-            else: pass
-        print('\n', end = '')
-
-    @staticmethod
-    def BernoulliV(p, n) -> float: return p * (1 - p) / n
-
-    @staticmethod
-    def lrjust(flt: float):
-        flt = float(flt)
-        if flt < .1: return str(float(np.round(100 * flt))).rjust(4, ' ').ljust(5, '0')
-        else: return str(float(np.round(100 * flt))).ljust(5, '0')
-
-    def __repr__(self): return ''
-
-class MultipleHypTest(object):
-
-    def __init__(self, z_scores, two_sides: bool = True, remove_zero_rows: bool = True, run_on_call: bool = False, **kwargs) -> NoReturn:
-        if remove_zero_rows: z_scores = z_scores[z_scores != 0].dropna()
-        self.z_scores = z_scores
-        self.two_sides = two_sides
-        self.N = len(z_scores)
-        self.S = len(z_scores.T)
-        self.rejections = {}
-        if kwargs.get('name', False): 
-            name = kwargs.pop('name')
-            print(f' {name} '.center(70, '-'))
-        if run_on_call: self.run(**kwargs)
-            
-
-    @ignore_unhashable
-    @cache
-    def p_values(self, z_scores, **kwargs):
-        pvals = []
-        if self.two_sides:
-            for z_score in z_scores:
-                pvals.append(1 - 2 * (scipy.stats.norm.cdf(np.abs(z_score), **kwargs) - .5))
-        else: raise NotImplementedError('...')
-        
-        self.pvals = np.sort(pvals)
-        return np.sort(pvals)
-
-    @ignore_unhashable
-    @cache
-    def Benjamini_Hochberg_Yekutilie(self, p_vals, method: str = 'hochberg', q: float = .05):
-
-        if method == 'yekutieli':
-            assert all(p_vals[i] <= p_vals[i+1] for i in range(self.N - 1))
-            NS: float = np.sum([1 / i for i in range(1, self.N + 1)])
-            for i in range(1, self.N + 1):
-                if p_vals[i - 1] <= i * q / (self.N * NS): return 1
-            return 0
-        
-        elif method == 'hochberg':
-            assert all(p_vals[i] <= p_vals[i+1] for i in range(self.N - 1))
-            for i in range(1, self.N + 1):
-                if p_vals[i - 1] <= i * q / self.N: return 1
-            return 0
-
-        else: print("Please select a method from ['hochberg','yekutieli']")
-
-    @ignore_unhashable
-    @cache
-    def BHY(self, method: str = 'hochberg', q: list = [.1, .05, .01], ret: bool = False):
-        rejections = {}
-        for s in q:
-            rejection_count = 0
-            for run, z_score in tqdm(self.z_scores.T.iterrows()):
-                pvals = self.p_values(z_score)
-                rejection_count += self.Benjamini_Hochberg_Yekutilie(pvals, method = method, q = s)
-            rejections = {**rejections, **{s:rejection_count / self.S}}
-            self.rejections = {**self.rejections, **{method:rejections}}
-        if ret: return rejections
-    
-    def run(self, q: list = [.1, .05, .01]) -> NoReturn:
-        for method in ['hochberg','yekutieli']:
-            print(f'MultipleHypTest@Self.run: running [{method}]...')
-            self.BHY(method = method, q = q)
-            self.print(method)
-        print('Finished'.center(70, '-'))
-
-    def print(self, method: str):
-        print(f'\n{method.title()}:')
-        for key, val in self.rejections.get(method, {'':''}).items():
-            if key != '':
-                print(
-                    'Rejection rate: {}% (\u03B1 = {}%)'.format(self.lrjust(val), self.lrjust(key)))
-            else: pass
-        print('\n', end = '')
-
-    @staticmethod
-    def BernoulliV(p, n) -> float: return p * (1 - p) / n
-
-    @staticmethod
-    def lrjust(flt: float):
-        if flt < .1: return str(float(np.round(100 * flt))).rjust(4, ' ').ljust(5, '0')
-        else: return str(float(np.round(100 * flt))).ljust(5, '0')
-    
-    def __repr__(self): return ''
-
-class LaTeXTable(object):
-
-    def __init__(self, methods: dict, n = 200):
-        self.methods = methods
-        self.n = n
-    
-    def header(self, name):
-        s = r"""
-        & \multicolumn{5}{c}{"""
-        s += "{}".format(name) + '}\\'
-
-        s += r"""\\cmidrule(lr){2-6}
-        & \multicolumn{1}{c}{Running Maximum} & \multicolumn{1}{c}{Benjamini-Hochberg} & \multicolumn{1}{c}{Benjamini-Yekutieli} & \multicolumn{1}{c}{KPSS} & \multicolumn{1}{c}{Leybourne-McCabe}\\
-          \cmidrule(lr){2-2} \cmidrule(lr){3-3} \cmidrule(lr){4-4} \cmidrule(lr){5-5} \cmidrule(lr){6-6}
-        $k$ & 5\% & 5\% & 5\% & 5\%  & 5\% \\
-        \midrule
-        """
-        return s
-    
-    def vals(self, *args):
-        s = r"""
-        50 & {} & {} & {} & {} & {} \\
-           & ({}) & ({}) & ({}) & ({}) & ({}) \\
-        [.2cm]
-        150 & {} & {} & {} & {} & {} \\
-           & ({}) & ({}) & ({}) & ({}) & ({}) \\
-        [.2cm]
-        365 & {} & {} & {} & {} & {} \\
-           & ({}) & ({}) & ({}) & ({}) & ({}) \\
-        """.format(*args)
-        return s
-
-    @staticmethod
-    def BernoulliV(p, n) -> float: return np.round(p * (1 - p) / n, 4)
-
-    def generate(self):
-        for idx, (name, vals) in enumerate(self.methods.items()):
-            print(self.header(name))
-            config = []
-            for x,y in vals.items():
-                std = []
-                pvals = []
-                
-                for z in y.values():    
-                    p = list(list(z.values())[0].values())[1]
-                    std.append(str(self.BernoulliV(p, self.n)).ljust(5, '0'))
-                    pvals.append(str(p).ljust(5, '0'))
-                config += pvals + std
-            print(self.vals(*config))
-            if idx == len(self.methods) - 1: print('\\bottomrule')
-            else: print('\midrule')
-
-if __name__ == '__main__':
-    # Usuage
-    X = pd.DataFrame(np.cumsum(np.random.normal(0,1,(500,50)), axis = 1))
-    test = MultipleHypTest(X)
-    
-    test.run()
-    test.rejections
+# unit tests taken from Schwert (1987) and verified against Matlab
+def main():
+    print("Leybourne-McCabe stationarity test...")
+    cur_dir = os.path.abspath(os.path.dirname(__file__))
+    run_dir = os.path.join(cur_dir, "results")
+    files = ['BAA.csv', 'DBAA.csv', 'DSP500.csv', 'DUN.csv', 'SP500.csv',
+             'UN.csv']
+    lm = Leybourne()
+    # turn off solver warnings
+    warnings.simplefilter("ignore")
+    for file in files:
+        print(" test file =", file)
+        mdl_file = os.path.join(run_dir, file)
+        mdl = np.asarray(pd.read_csv(mdl_file))
+        st = time.time()
+        if file == 'BAA.csv':
+            res = lm(mdl, regression='ct')
+            _print_res(res=res, st=st)
+            assert_equal(res[2], 3)
+            assert_almost_equal(res[0], 5.4438, decimal=3)
+            assert_almost_equal(res[1], 0.0000, decimal=3)
+            st = time.time()
+            res = lm(mdl, regression='ct', method='ols')
+            _print_res(res=res, st=st)
+            assert_equal(res[2], 3)
+            assert_almost_equal(res[0], 5.4757, decimal=3)
+            assert_almost_equal(res[1], 0.0000, decimal=3)
+        elif file == 'DBAA.csv':
+            res = lm(mdl)
+            _print_res(res=res, st=st)
+            assert_equal(res[2], 2)
+            assert_almost_equal(res[0], 0.1173, decimal=3)
+            assert_almost_equal(res[1], 0.5072, decimal=3)
+            st = time.time()
+            res = lm(mdl, regression='ct')
+            _print_res(res=res, st=st)
+            assert_equal(res[2], 2)
+            assert_almost_equal(res[0], 0.1175, decimal=3)
+            assert_almost_equal(res[1], 0.1047, decimal=3)
+        elif file == 'DSP500.csv':
+            res = lm(mdl)
+            _print_res(res=res, st=st)
+            assert_equal(res[2], 0)
+            assert_almost_equal(res[0], 0.3118, decimal=3)
+            assert_almost_equal(res[1], 0.1256, decimal=3)
+            st = time.time()
+            res = lm(mdl, varest='var99')
+            _print_res(res=res, st=st)
+            assert_equal(res[2], 0)
+            assert_almost_equal(res[0], 0.3145, decimal=3)
+            assert_almost_equal(res[1], 0.1235, decimal=3)
+        elif file == 'DUN.csv':
+            res = lm(mdl, regression='ct')
+            _print_res(res=res, st=st)
+            assert_equal(res[2], 3)
+            assert_almost_equal(res[0], 0.0252, decimal=3)
+            # assert_almost_equal(res[1], 0.9318, decimal=3)
+            assert_almost_equal(res[1], 0.9286, decimal=3)
+            st = time.time()
+            res = lm(mdl, regression='ct', method='ols')
+            _print_res(res=res, st=st)
+            assert_equal(res[2], 3)
+            assert_almost_equal(res[0], 0.0938, decimal=3)
+            assert_almost_equal(res[1], 0.1890, decimal=3)
+        elif file == 'SP500.csv':
+            res = lm(mdl, arlags=4, regression='ct')
+            _print_res(res=res, st=st)
+            assert_almost_equal(res[0], 1.8761, decimal=3)
+            assert_almost_equal(res[1], 0.0000, decimal=3)
+            st = time.time()
+            res = lm(mdl, arlags=4, regression='ct', method='ols')
+            _print_res(res=res, st=st)
+            assert_almost_equal(res[0], 1.9053, decimal=3)
+            assert_almost_equal(res[1], 0.0000, decimal=3)
+        elif file == 'UN.csv':
+            res = lm(mdl, varest='var99')
+            _print_res(res=res, st=st)
+            assert_equal(res[2], 4)
+            # assert_almost_equal(res[0], 285.6100, decimal=3)
+            assert_almost_equal(res[0], 285.5181, decimal=3)
+            assert_almost_equal(res[1], 0.0000, decimal=3)
+            st = time.time()
+            res = lm(mdl, method='ols', varest='var99')
+            _print_res(res=res, st=st)
+            assert_equal(res[2], 4)
+            assert_almost_equal(res[0], 556.0444, decimal=3)
+            assert_almost_equal(res[1], 0.0000, decimal=3)
 
 
-    test_kpss = UnitRootTest(processes = X)
-    test_kpss.run()
-    
-    test_kpss.rejections_lm
-
-    kpss(X[0])
-    X[0].plot()
+if __name__ == "__main__":
+    sys.exit(int(main() or 0))

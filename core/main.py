@@ -6,11 +6,10 @@ import matplotlib.pyplot as plt
 from sklearn.neighbors import KernelDensity
 from tqdm import tqdm 
 
-import nest_asyncio, inspect, functools, itertools, sys, scipy
+import nest_asyncio, inspect, functools, itertools, sys, scipy, models
 nest_asyncio.apply()
 sys.path.append('../')
 
-from core import models
 from attributes import repr
 from attributes.dec import deprecated
 from attributes.attributes import *
@@ -34,7 +33,7 @@ from typing import (
 import warnings
 warnings.filterwarnings(action = 'ignore')
 
-__VERSION__: str = '1.0.6'
+__VERSION__: str = '1.0.5'
 
 def running_maximum(X): return list(accumulate(np.abs(X), max))
 def simple_sequence(X, pct: float = .3) -> float: return pct * (np.max(X.flatten()) - np.min(X.flatten()))
@@ -374,8 +373,7 @@ class Test(object):
             if np.isnan(g).any():
                 final.append(0)
             else:
-                # Should be sqrt(3), yet a small adjustment in the bandwidth will offset this and so we leave it as is.
-                final.append(np.sum(g) / 3)
+                final.append(np.sum(g) / np.sqrt(3))
         
         return bound, final
 
@@ -460,6 +458,9 @@ class TestV2(object):
         return P_P
     
     def emp_dist(self, dist: bool):
+        """
+        Empirical distribution calculator used in the covariance of the weak limit.
+        """
         if not dist:
             return np.ones(self.kernel_params['n'])
         else:
@@ -621,7 +622,8 @@ class TestV2(object):
             try: VI = std_inv[i]
             except: VI = np.matrix([[np.nan,np.nan, np.nan],[np.nan,np.nan, np.nan],[np.nan,np.nan, np.nan]])
             gaussian.append(
-                np.sqrt(n * b ** 2) * VI @ diff_vec[i]
+                # Should be np.sqrt(T * b ** 2) 
+                np.sqrt(T * b ** 2) * VI @ diff_vec[i]
             )
             
         self.gaussian = gaussian
@@ -629,7 +631,9 @@ class TestV2(object):
     def transform_1D_gauss(self, alpha: float = .95):
         x = np.log(1 / np.log(1/alpha))
 
-        if not hasattr(self, 'gaussian'): self.gauss()
+        if not hasattr(self, 'gaussian'): 
+            self.gauss()
+            print('Self@gauss(...) called.')
         n = len(self.gaussian)
         an = [np.sqrt(2 * np.log(z)) for z in range(1, n + 1)]
         bn = [np.sqrt(2 * np.log(z)) - (np.log(np.pi * np.log(z)) / (2 * np.sqrt(2 * np.log(z)))) for z in range(1, n + 1)]
@@ -642,7 +646,7 @@ class TestV2(object):
             if np.isnan(g).any():
                 final.append(0)
             else:
-                final.append(np.sum(g) / 3)
+                final.append(np.sum(g) / np.sqrt(3))
         
         return bound, final
 
@@ -654,6 +658,7 @@ class repl(object):
         self.gauss = gauss
         self.name = name
         self.number_of_runs = len(gauss.columns)
+        self.rejections = {}
 
     def bound(self, alpha):
         x = -np.log(np.log(1/alpha))
@@ -671,11 +676,14 @@ class repl(object):
         bounds = []
         for alpha in alphas: bounds.append(self.bound(alpha))
         for alpha, bound in zip(alphas, bounds):
+            r = np.sum([(running_maximum(self.gauss[f'run_{run}'])[-1] > bound[-1]) for run in range(self.number_of_runs)]) / self.number_of_runs
+            self.rejections = {**self.rejections, **{1 - alpha:r}}
             print('Number of runs: {}, rejection rate: {}% (\u03B1 = {}%)'.format(
                 self.number_of_runs, 
-                np.round(100 * np.sum([1 * (running_maximum(self.gauss[f'run_{run}'])[-1] > bound[-1]) for run in range(self.number_of_runs)]) / self.number_of_runs, 2),
+                np.round(100 * np.sum([(running_maximum(self.gauss[f'run_{run}'])[-1] > bound[-1]) for run in range(self.number_of_runs)]) / self.number_of_runs, 2),
                 np.round(100 * alpha, 0)
             ))
+        self.rejections = {'running maximum':self.rejections}
         print('')
     
 class simulate(object):
@@ -697,7 +705,7 @@ class simulate(object):
         self.results = {}
         if True:self.info()
     
-    def generate_config(self, data, T, n):
+    def generate_config(self, data, T, n, bw_seq: list = [9, 6, 2]):
         """
         Standard configuration with a correction from discussion in Fan-Fan-Lv (https://arxiv.org/pdf/math/07011070)
         """
@@ -706,7 +714,7 @@ class simulate(object):
                 config: dict = {
                     'data'  : data,
                     'kernel_params' : {
-                        'bandwidth' : 4.5 / ((n ** (1 / 5))),
+                        'bandwidth' : np.sqrt(3) * bw_seq[0] / ((n ** (1 / 6)) * np.log(n)),
                         'n'         : n,
                         'T'         : T,
                         'kernel'    : Kernel.BaseKernel
@@ -721,7 +729,7 @@ class simulate(object):
                 config: dict = {
                     'data'  : data,
                     'kernel_params' : {
-                        'bandwidth' : 3 / ((n ** (1 / 5))),
+                        'bandwidth' : np.sqrt(3) * bw_seq[1] / ((n ** (1 / 6)) * np.log(n)),
                         'n'         : n,
                         'T'         : T,
                         'kernel'    : Kernel.BaseKernel
@@ -736,7 +744,7 @@ class simulate(object):
                 config: dict = {
                     'data'  : data,
                     'kernel_params' : {
-                        'bandwidth' : 2 / ((n ** (1 / 5))),
+                        'bandwidth' : np.sqrt(3) * bw_seq[2] / ((n ** (1 / 6)) * np.log(n)),
                         'n'         : n,
                         'T'         : T,
                         'kernel'    : Kernel.BaseKernel
@@ -872,7 +880,7 @@ class Container(object):
         }
         return config
 
-class graph(Test):
+class graph(TestV2):
 
     def __init__(self, cl): 
         for _, __ in cl.__dict__.items(): self.__setattr__(_, __)
@@ -880,7 +888,9 @@ class graph(Test):
     def bound(self, alpha):
         x = -np.log(np.log(1/alpha))
 
-        if not hasattr(self, 'gaussian'): self.gauss()
+        if not hasattr(self, 'gaussian'): 
+            self.gauss()
+            print('Gaussian called')
         n = len(self.gaussian)
         an = [np.sqrt(2 * np.log(z)) for z in range(1, n + 1)]
         bn = [np.sqrt(2 * np.log(z)) - ((np.log(np.log(z)) + np.log(np.pi)) / (2 * np.sqrt(2 * np.log(z)))) for z in range(1, n + 1)]

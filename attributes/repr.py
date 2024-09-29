@@ -5,6 +5,9 @@ from typing import (
 )
 
 import attributes.attributes as attributes
+import numpy as np
+
+def ArrayLikeMax(seq: Any = []) -> float | int: return np.max(np.abs(seq))
 
 class differential_equations:
     """
